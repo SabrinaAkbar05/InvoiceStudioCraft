@@ -42,22 +42,42 @@ export class FirebaseInvoiceRepository implements IInvoiceRepository {
     const user = auth.currentUser;
     const local = await this.localFallback.getInvoice(id);
 
-    if (!user || !local || !local.workspaceId) {
-      return local;
+    if (local && local.workspaceId) {
+      if (!user) return local;
+      try {
+        const ref = doc(db, 'workspaces', local.workspaceId, 'invoices', id);
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          const cloudInv = { id: snap.id, ...snap.data() } as Invoice;
+          await this.localFallback.saveInvoice(cloudInv);
+          return cloudInv;
+        }
+        return local;
+      } catch (err) {
+        return local;
+      }
     }
 
-    try {
-      const ref = doc(db, 'workspaces', local.workspaceId, 'invoices', id);
-      const snap = await getDoc(ref);
-      if (snap.exists()) {
-        const cloudInv = { id: snap.id, ...snap.data() } as Invoice;
-        await this.localFallback.saveInvoice(cloudInv);
-        return cloudInv;
+    // If not found locally and user is logged in, attempt to fetch from user's active workspace
+    if (user) {
+      try {
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        const wsId = userDoc.exists() ? userDoc.data()?.defaultWorkspaceId : null;
+        if (wsId) {
+          const ref = doc(db, 'workspaces', wsId, 'invoices', id);
+          const snap = await getDoc(ref);
+          if (snap.exists()) {
+            const cloudInv = { id: snap.id, ...snap.data() } as Invoice;
+            await this.localFallback.saveInvoice(cloudInv);
+            return cloudInv;
+          }
+        }
+      } catch (err) {
+        console.warn('[FirebaseInvoiceRepository] Error fetching invoice from cloud:', err);
       }
-      return local;
-    } catch (err) {
-      return local;
     }
+
+    return local;
   }
 
   async saveInvoice(invoice: Invoice): Promise<void> {
@@ -178,7 +198,10 @@ export class FirebaseInvoiceRepository implements IInvoiceRepository {
 
   async deleteInvoice(id: string): Promise<void> {
     const user = auth.currentUser;
-    const existing = await this.localFallback.getInvoice(id);
+    let existing = await this.localFallback.getInvoice(id);
+    if (!existing && user) {
+      existing = await this.getInvoice(id);
+    }
 
     await this.localFallback.deleteInvoice(id);
 
