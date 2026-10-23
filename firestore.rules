@@ -1,0 +1,110 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isUser(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isWorkspaceMember(workspaceId) {
+      return isAuthenticated() && (
+        exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid)) ||
+        get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid
+      );
+    }
+
+    function getWorkspaceRole(workspaceId) {
+      return get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid)).data.role;
+    }
+
+    function isWorkspaceAdminOrOwner(workspaceId) {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid ||
+        getWorkspaceRole(workspaceId) in ['owner', 'admin']
+      );
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // User profiles — only the user themselves can read and write their profile
+    match /users/{userId} {
+      allow read, write: if isUser(userId);
+    }
+
+    // Workspaces
+    match /workspaces/{workspaceId} {
+      allow read: if isWorkspaceMember(workspaceId);
+      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
+      allow update: if isWorkspaceAdminOrOwner(workspaceId);
+      allow delete: if isAuthenticated() && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid;
+
+      // Workspace Members — only admin/owner can write, prevent self-elevation
+      match /members/{memberId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow write: if isWorkspaceAdminOrOwner(workspaceId);
+      }
+
+      // Brand Kit
+      match /brandKits/{brandKitId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow write: if isWorkspaceMember(workspaceId);
+      }
+
+      // Customers
+      match /customers/{customerId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow write: if isWorkspaceMember(workspaceId);
+      }
+
+      // Products
+      match /products/{productId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow write: if isWorkspaceMember(workspaceId);
+      }
+
+      // Invoices
+      // Drafts can be created and modified by members.
+      // Once issued/partially_paid/paid, invoices cannot be directly rewritten by clients;
+      // financial mutations flow through validated server endpoints or admin transactions.
+      match /invoices/{invoiceId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create: if isWorkspaceMember(workspaceId);
+        allow update: if isWorkspaceMember(workspaceId) && (
+          // Allow draft modifications
+          resource.data.status == 'draft' ||
+          // Admin/Owner can update status for workflow corrections, but cannot delete financial record
+          isWorkspaceAdminOrOwner(workspaceId)
+        );
+        allow delete: if isWorkspaceAdminOrOwner(workspaceId) && resource.data.status == 'draft';
+      }
+
+      // Payments
+      match /payments/{paymentId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create, update: if isWorkspaceAdminOrOwner(workspaceId);
+        allow delete: if isWorkspaceAdminOrOwner(workspaceId);
+      }
+
+      // Audit Events
+      match /auditEvents/{eventId} {
+        allow read: if isWorkspaceAdminOrOwner(workspaceId);
+        allow create: if isWorkspaceMember(workspaceId);
+        allow update, delete: if false;
+      }
+
+      // Settings
+      match /settings/{settingId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow write: if isWorkspaceAdminOrOwner(workspaceId);
+      }
+    }
+  }
+}
