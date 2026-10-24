@@ -84,7 +84,30 @@ export async function authorizeWorkspaceAccess(
   const workspaceSnap = await workspaceRef.get();
 
   if (!workspaceSnap.exists) {
-    throw new Error('Not Found: Workspace does not exist');
+    // If workspace does not exist in Firestore yet, automatically bootstrap it for the authenticated creator
+    const now = new Date().toISOString();
+    await workspaceRef.set({
+      id: workspaceId,
+      ownerId: user.uid,
+      createdAt: now,
+      updatedAt: now
+    }, { merge: true });
+
+    // Also add member record
+    await workspaceRef.collection('members').doc(user.uid).set({
+      userId: user.uid,
+      email: user.email,
+      role: 'owner',
+      joinedAt: now
+    }, { merge: true });
+
+    return {
+      user,
+      workspaceId,
+      role: 'owner',
+      isOwner: true,
+      isAdmin: true
+    };
   }
 
   const wsData = workspaceSnap.data() || {};

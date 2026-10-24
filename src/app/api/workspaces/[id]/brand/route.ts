@@ -81,7 +81,15 @@ export async function PUT(
     return NextResponse.json(dataToSave);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to save brand kit';
-    const status = message.startsWith('Unauthorized') ? 401 : message.startsWith('Forbidden') ? 403 : 500;
+    const status = message.startsWith('Unauthorized')
+      ? 401
+      : message.startsWith('Forbidden')
+      ? 403
+      : message.startsWith('Not Found')
+      ? 404
+      : message.startsWith('Bad Request')
+      ? 400
+      : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
