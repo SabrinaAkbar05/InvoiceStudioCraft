@@ -52,6 +52,4 @@ export class LocalWorkspaceRepository implements IWorkspaceRepository {
   }
 }
 
-import { FirebaseWorkspaceRepository } from './firebase/workspace.firebase';
-
-export const workspaceRepo = new FirebaseWorkspaceRepository();
+export const workspaceRepo = new LocalWorkspaceRepository();

@@ -47,6 +47,4 @@ export class LocalCustomerRepository implements ICustomerRepository {
   }
 }
 
-import { FirebaseCustomerRepository } from './firebase/customer.firebase';
-
-export const customerRepo = new FirebaseCustomerRepository();
+export const customerRepo = new LocalCustomerRepository();

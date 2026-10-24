@@ -205,6 +205,4 @@ export class LocalInvoiceRepository implements IInvoiceRepository {
   }
 }
 
-import { FirebaseInvoiceRepository } from './firebase/invoice.firebase';
-
-export const invoiceRepo = new FirebaseInvoiceRepository();
+export const invoiceRepo = new LocalInvoiceRepository();

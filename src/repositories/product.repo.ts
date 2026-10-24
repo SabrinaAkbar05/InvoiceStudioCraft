@@ -47,6 +47,4 @@ export class LocalProductRepository implements IProductRepository {
   }
 }
 
-import { FirebaseProductRepository } from './firebase/product.firebase';
-
-export const productRepo = new FirebaseProductRepository();
+export const productRepo = new LocalProductRepository();

@@ -8,7 +8,6 @@ import { brandRepo } from '@/repositories/brand.repo';
 import { seedDemoData } from '@/lib/db/seed';
 import { Workspace, DEFAULT_WORKSPACE } from '@/types/workspace';
 import { BrandKit } from '@/types/brand';
-import { MigrationBanner } from '@/components/migration/MigrationBanner';
 import { toast } from '@/components/ui/Toast';
 import { X } from 'lucide-react';
 
@@ -148,7 +147,6 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
               </div>
             ) : (
               <div className="page-enter">
-                <MigrationBanner workspace={workspace} />
                 {children}
               </div>
             )}

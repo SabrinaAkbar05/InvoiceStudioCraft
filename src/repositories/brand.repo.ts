@@ -33,6 +33,4 @@ export class LocalBrandRepository implements IBrandRepository {
   }
 }
 
-import { FirebaseBrandRepository } from './firebase/brand.firebase';
-
-export const brandRepo = new FirebaseBrandRepository();
+export const brandRepo = new LocalBrandRepository();
