@@ -389,6 +389,27 @@ export default function BrandStudioPage() {
           </button>
         </div>
 
+        {saveStatus === 'error' && saveErrorMessage && (
+          <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start justify-between gap-3 animate-in fade-in slide-in-from-top-1">
+            <div className="flex items-start gap-2.5">
+              <RotateCcw className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-rose-900">Brand Kit Cloud Sync Issue</p>
+                <p className="text-rose-700 mt-0.5">{saveErrorMessage}</p>
+                <p className="text-slate-500 text-[11px] mt-1">
+                  💡 Note: Your brand kit changes are safely stored in your browser storage. If cloud permissions are pending, clicking &quot;Sync to Cloud&quot; on the banner above or re-logging in will link your cloud workspace.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => { setSaveStatus('idle'); setSaveErrorMessage(null); }}
+              className="text-rose-500 hover:text-rose-800 text-sm font-bold"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* 2-Column Studio Grid: Left Controls, Right Real-Time Preview */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
