@@ -76,8 +76,7 @@ export class FirebaseProductRepository implements IProductRepository {
         const ref = doc(db, 'workspaces', product.workspaceId, 'products', product.id);
         await setDoc(ref, updated, { merge: true });
       } catch (err) {
-        console.error('[FirebaseProductRepository] Failed to save product to Firestore:', err);
-        throw err;
+        console.warn('[FirebaseProductRepository] Cloud sync warning for product:', err);
       }
     }
   }

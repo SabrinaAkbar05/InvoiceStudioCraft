@@ -127,12 +127,10 @@ export class FirebaseBrandRepository implements IBrandRepository {
 
           if (!res.ok) {
             const errRes = await res.json().catch(() => ({}));
-            throw new Error(errRes.error || `Server API save failed with status ${res.status}`);
+            console.warn('[FirebaseBrandRepository] Server API save returned non-200:', errRes);
           }
         } catch (serverErr) {
-          console.error('[FirebaseBrandRepository] Both client and server cloud saves failed:', serverErr);
-          // If local IndexedDB succeeded, throw with a clear message indicating it is saved locally
-          throw new Error('Saved locally! Cloud sync failed: ' + (serverErr instanceof Error ? serverErr.message : 'Permission denied or offline'));
+          console.warn('[FirebaseBrandRepository] Cloud sync warning (local data preserved):', serverErr);
         }
       }
     }

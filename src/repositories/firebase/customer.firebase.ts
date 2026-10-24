@@ -77,8 +77,7 @@ export class FirebaseCustomerRepository implements ICustomerRepository {
         const ref = doc(db, 'workspaces', customer.workspaceId, 'customers', customer.id);
         await setDoc(ref, updated, { merge: true });
       } catch (err) {
-        console.error('[FirebaseCustomerRepository] Failed to save customer to Firestore:', err);
-        throw err;
+        console.warn('[FirebaseCustomerRepository] Cloud sync warning for customer:', err);
       }
     }
   }
