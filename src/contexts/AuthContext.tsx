@@ -7,6 +7,8 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider,
   signOut,
   sendPasswordResetEmail,
@@ -19,41 +21,82 @@ import { AuthContextType, UserProfile } from '@/types/auth';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/**
+ * Detects if the user is on a mobile device where popups are blocked.
+ * On mobile we fall back to redirect-based OAuth.
+ */
+function isMobile(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(
+    navigator.userAgent
+  );
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
 
+  /** Upsert Firestore user profile document */
+  const syncUserProfile = async (currentUser: FirebaseUser) => {
+    try {
+      const userDocRef = doc(db, 'users', currentUser.uid);
+      const userSnap = await getDoc(userDocRef);
+
+      if (userSnap.exists()) {
+        const data = userSnap.data() as UserProfile;
+        setProfile(data);
+        if (data.defaultWorkspaceId) {
+          setActiveWorkspaceId(data.defaultWorkspaceId);
+        }
+      } else {
+        const newProfile: UserProfile = {
+          uid: currentUser.uid,
+          email: currentUser.email,
+          displayName: currentUser.displayName || null,
+          photoURL: currentUser.photoURL || null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        await setDoc(userDocRef, newProfile);
+        setProfile(newProfile);
+      }
+    } catch (err) {
+      console.error('[AuthContext] Failed to sync user profile:', err);
+      // Graceful degradation: keep app usable even if Firestore is unreachable
+      setProfile({
+        uid: currentUser.uid,
+        email: currentUser.email,
+        displayName: currentUser.displayName || null,
+        photoURL: currentUser.photoURL || null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
+  };
+
   useEffect(() => {
+    // Handle the result of signInWithRedirect (fires after page reload on mobile)
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          // The onAuthStateChanged below will pick up the user and sync the profile.
+          console.log('[AuthContext] Redirect sign-in successful:', result.user.email);
+        }
+      })
+      .catch((err) => {
+        // Common on first load when no redirect was initiated — safe to ignore.
+        const code = (err as { code?: string }).code;
+        if (code && code !== 'auth/no-auth-event') {
+          console.error('[AuthContext] getRedirectResult error:', err);
+        }
+      });
+
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        try {
-          const userDocRef = doc(db, 'users', currentUser.uid);
-          const userSnap = await getDoc(userDocRef);
-
-          if (userSnap.exists()) {
-            const data = userSnap.data() as UserProfile;
-            setProfile(data);
-            if (data.defaultWorkspaceId) {
-              setActiveWorkspaceId(data.defaultWorkspaceId);
-            }
-          } else {
-            const newProfile: UserProfile = {
-              uid: currentUser.uid,
-              email: currentUser.email,
-              displayName: currentUser.displayName || null,
-              photoURL: currentUser.photoURL || null,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            };
-            await setDoc(userDocRef, newProfile);
-            setProfile(newProfile);
-          }
-        } catch (err) {
-          console.error('[AuthContext] Failed to load or initialize user profile:', err);
-        }
+        await syncUserProfile(currentUser);
       } else {
         setProfile(null);
         setActiveWorkspaceId(null);
@@ -62,6 +105,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     return () => unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const signInWithEmail = async (email: string, pass: string) => {
@@ -80,12 +124,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (displayName && cred.user) {
         await updateProfile(cred.user, { displayName });
       }
-      // Send verification email
       if (cred.user) {
         try {
           await sendEmailVerification(cred.user);
         } catch (e) {
-          console.warn('[AuthContext] Could not send initial verification email:', e);
+          console.warn('[AuthContext] Could not send verification email:', e);
         }
       }
     } finally {
@@ -93,11 +136,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  /**
+   * Google sign-in:
+   * - Desktop: popup (instant UX)
+   * - Mobile: redirect (avoids popup-blocked errors on iOS/Android)
+   */
   const signInWithGoogle = async () => {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+
+    if (isMobile()) {
+      // Redirect flow — page will reload and getRedirectResult handles the rest
+      await signInWithRedirect(auth, provider);
+      // Code below this line will NOT run on mobile (page navigates away)
+      return;
+    }
+
     setLoading(true);
     try {
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
       await signInWithPopup(auth, provider);
     } finally {
       setLoading(false);

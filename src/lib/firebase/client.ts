@@ -8,7 +8,7 @@ const firebaseConfig = {
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
   storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
 function initFirebaseClient(): { app: FirebaseApp; auth: Auth; db: Firestore } {
@@ -20,7 +20,7 @@ function initFirebaseClient(): { app: FirebaseApp; auth: Auth; db: Firestore } {
     if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
       console.warn(
         '[Firebase Client] Warning: Firebase client configuration keys are missing. ' +
-        'Please check that NEXT_PUBLIC_FIREBASE_API_KEY and NEXT_PUBLIC_FIREBASE_PROJECT_ID are defined.'
+        'Please check that NEXT_PUBLIC_FIREBASE_API_KEY and NEXT_PUBLIC_FIREBASE_PROJECT_ID are set in your .env.local file.'
       );
     }
     app = initializeApp(firebaseConfig);

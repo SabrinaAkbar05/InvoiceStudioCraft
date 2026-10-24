@@ -126,7 +126,7 @@ export default function WorkspaceSetupPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F9FC] text-[#171B32] py-12 px-4 sm:px-6 lg:px-8 flex flex-col justify-center items-center">
+    <div className="min-h-screen bg-[#F8F9FC] text-[#171B32] py-8 px-4 sm:px-6 lg:px-8 flex flex-col justify-center items-center">
       <div className="max-w-xl w-full space-y-6">
         
         {/* Logo and Progress Stepper */}
@@ -193,11 +193,13 @@ export default function WorkspaceSetupPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Billing Email *</label>
                   <input
                     type="email"
+                    inputMode="email"
+                    autoComplete="email"
                     required
                     placeholder="billing@acmestudio.com"
                     value={email}
@@ -208,7 +210,9 @@ export default function WorkspaceSetupPage() {
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Phone Number</label>
                   <input
-                    type="text"
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
                     placeholder="+1 (555) 234-5678"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
@@ -217,11 +221,12 @@ export default function WorkspaceSetupPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Website URL (Optional)</label>
                   <input
-                    type="text"
+                    type="url"
+                    inputMode="url"
                     placeholder="https://acmestudio.com"
                     value={website}
                     onChange={(e) => setWebsite(e.target.value)}
@@ -240,11 +245,12 @@ export default function WorkspaceSetupPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
                   <label className="block text-xs font-bold text-slate-700 mb-1">Street Address</label>
                   <input
                     type="text"
+                    autoComplete="street-address"
                     placeholder="742 Evergreen Terrace"
                     value={line1}
                     onChange={(e) => setLine1(e.target.value)}
@@ -255,6 +261,7 @@ export default function WorkspaceSetupPage() {
                   <label className="block text-xs font-bold text-slate-700 mb-1">City</label>
                   <input
                     type="text"
+                    autoComplete="address-level2"
                     placeholder="San Francisco"
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
@@ -290,7 +297,7 @@ export default function WorkspaceSetupPage() {
                 <h3 className="text-sm font-bold text-slate-900">Step 2: Currency & Payment Defaults</h3>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Default Currency</label>
                   <select

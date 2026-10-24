@@ -44,7 +44,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 5,
+  // Allow users to zoom (maximumScale: 1 is an accessibility violation)
   themeColor: "#5B4FCF",
 };
 
@@ -61,8 +61,13 @@ export default function RootLayout({
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        {/* Inter font for premium typography */}
+        <link
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+          rel="stylesheet"
+        />
       </head>
-      <body className="min-h-full flex flex-col bg-[#F5F6FA] text-[#0F1128]">
+      <body className="min-h-full flex flex-col bg-[#F5F6FA] text-[#0F1128] font-sans">
         <AuthProvider>
           {children}
           <ToastContainer />

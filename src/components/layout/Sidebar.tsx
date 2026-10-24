@@ -14,9 +14,9 @@ import {
   Sparkles,
   ArrowUpRight,
   ExternalLink,
-  Zap
 } from 'lucide-react';
 import { Workspace } from '@/types/workspace';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface SidebarProps {
   workspace: Workspace | null;
@@ -62,6 +62,7 @@ const NAV_ITEMS: NavGroup[] = [
 
 export const Sidebar: React.FC<SidebarProps> = ({ workspace, onCloseMobile }) => {
   const pathname = usePathname();
+  const { user } = useAuth();
 
   const isActive = (href: string) => {
     if (href === '/dashboard') return pathname === '/dashboard';
@@ -177,16 +178,38 @@ export const Sidebar: React.FC<SidebarProps> = ({ workspace, onCloseMobile }) =>
           <ExternalLink className="w-3.5 h-3.5" />
         </Link>
 
-        {/* Offline mode status */}
-        <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-          <div className="flex items-center gap-1.5 mb-1">
-            <Zap className="w-3 h-3 text-amber-500" />
-            <p className="text-[11px] font-bold text-slate-700">Offline Autonomous Mode</p>
+        {/* Dynamic Cloud / Local Mode Status */}
+        {user ? (
+          <div className="p-3 bg-emerald-50/70 rounded-xl border border-emerald-100/80 shadow-xs">
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <p className="text-[11px] font-bold text-emerald-800">Cloud Synchronized</p>
+            </div>
+            <p className="text-[10px] text-emerald-700 leading-snug truncate font-medium" title={user.email || undefined}>
+              {user.email || 'Cloud workspace active'}
+            </p>
+            <p className="text-[9px] text-emerald-600/80 mt-0.5">
+              Live Firestore synchronization
+            </p>
           </div>
-          <p className="text-[10px] text-slate-400 leading-relaxed">
-            No cloud credentials required. Data saved locally. Ready for Vercel deploy.
-          </p>
-        </div>
+        ) : (
+          <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className="w-2 h-2 rounded-full bg-amber-400" />
+              <p className="text-[11px] font-bold text-slate-700">Guest / Local Mode</p>
+            </div>
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              Data saved locally. Sign in to sync across devices.
+            </p>
+            <Link
+              href="/login"
+              className="mt-1.5 inline-block text-[10px] font-semibold text-[#6254E8] hover:underline"
+              onClick={onCloseMobile}
+            >
+              Sign in to Cloud →
+            </Link>
+          </div>
+        )}
       </div>
     </aside>
   );
