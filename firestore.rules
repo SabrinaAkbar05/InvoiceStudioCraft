@@ -17,8 +17,11 @@ service cloud.firestore {
     // Checks if the requester is the direct owner of the workspace
     function isWorkspaceOwner(workspaceId) {
       return isAuthenticated() && (
-        (resource != null && resource.data.ownerId == request.auth.uid) ||
-        get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid
+        (resource != null && ('ownerId' in resource.data) && resource.data.ownerId == request.auth.uid) ||
+        (
+          exists(/databases/$(database)/documents/workspaces/$(workspaceId)) &&
+          get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid
+        )
       );
     }
 

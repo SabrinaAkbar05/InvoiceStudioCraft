@@ -53,8 +53,24 @@ export async function PUT(
     const brandKitId = body.id || `bk_${workspaceId}`;
     const brandKitRef = db.collection('workspaces').doc(workspaceId).collection('brandKits').doc(brandKitId);
 
+    // Sanitize payload: strip undefined properties
+    const cleanBody: Record<string, any> = {};
+    for (const [key, val] of Object.entries(body)) {
+      if (val !== undefined) {
+        cleanBody[key] = val;
+      }
+    }
+
+    // If cloud URL is present, avoid bloating Firestore with massive base64 string
+    if (cleanBody.logoUrl && cleanBody.logoDataUrl && cleanBody.logoDataUrl.length > 100000) {
+      delete cleanBody.logoDataUrl;
+    }
+    if (cleanBody.signatureUrl && cleanBody.signatureDataUrl && cleanBody.signatureDataUrl.length > 100000) {
+      delete cleanBody.signatureDataUrl;
+    }
+
     const dataToSave = {
-      ...body,
+      ...cleanBody,
       id: brandKitId,
       workspaceId,
       updatedAt: new Date().toISOString()

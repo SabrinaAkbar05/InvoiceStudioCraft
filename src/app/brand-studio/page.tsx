@@ -11,6 +11,8 @@ import { Invoice } from '@/types/invoice';
 import { InvoiceTemplateRenderer } from '@/components/invoices/templates/InvoiceTemplateRenderer';
 import { uploadToCloudinary } from '@/lib/cloudinary/client';
 import { toast } from '@/components/ui/Toast';
+
+import { useAuth } from '@/contexts/AuthContext';
 import {
   Upload,
   Sparkles,
@@ -23,39 +25,72 @@ import {
   Trash2,
   Sliders,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Loader2,
+  RotateCcw
 } from 'lucide-react';
 
 export default function BrandStudioPage() {
+  const { user, activeWorkspaceId } = useAuth();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [brandKit, setBrandKit] = useState<BrandKit | null>(null);
   const [extractedPalette, setExtractedPalette] = useState<ExtractedPalette | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [isUploadingSignature, setIsUploadingSignature] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   const logoInputRef = useRef<HTMLInputElement>(null);
   const signatureInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    async function init() {
+  // Load active workspace and its brand kit
+  const loadBrandStudioData = async () => {
+    try {
       const ws = await workspaceRepo.getActiveWorkspace();
       if (ws) {
         setWorkspace(ws);
         const bk = await brandRepo.getBrandKit(ws.id);
         if (bk) {
-          setBrandKit(bk);
-          if (bk.logoDataUrl) {
-            const palette = await extractColorsFromImage(bk.logoDataUrl);
+          // Ensure brandKit is keyed to the current workspace
+          const normalizedBk = {
+            ...bk,
+            workspaceId: ws.id
+          };
+          setBrandKit(normalizedBk);
+          if (normalizedBk.logoDataUrl) {
+            const palette = await extractColorsFromImage(normalizedBk.logoDataUrl);
             setExtractedPalette(palette);
           }
         }
       }
+    } catch (err) {
+      console.warn('[BrandStudio] Initialization warning:', err);
+    } finally {
+      setIsLoading(false);
     }
-    init();
-  }, []);
+  };
 
+  useEffect(() => {
+    loadBrandStudioData();
 
+    // Re-synchronize when workspace updates
+    const handleWorkspaceUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<Workspace>;
+      if (customEvent.detail) {
+        setWorkspace(customEvent.detail);
+        brandRepo.getBrandKit(customEvent.detail.id).then((bk) => {
+          if (bk) setBrandKit(bk);
+        });
+      }
+    };
+    window.addEventListener('workspace-updated', handleWorkspaceUpdated);
+
+    return () => {
+      window.removeEventListener('workspace-updated', handleWorkspaceUpdated);
+    };
+  }, [user, activeWorkspaceId]);
 
   const handleLogoUpload = async (file: File) => {
     if (!file) return;
@@ -94,12 +129,18 @@ export default function BrandStudioPage() {
       toast.success('Logo uploaded and brand colors extracted successfully!');
 
       // Cloudinary cloud upload if workspace is active
-      if (workspace?.id) {
+      const activeWs = workspace || (await workspaceRepo.getActiveWorkspace());
+      if (activeWs?.id && activeWs.id !== 'ws_current') {
+        setIsUploadingLogo(true);
         try {
-          const res = await uploadToCloudinary(file, workspace.id, 'logos');
+          const res = await uploadToCloudinary(file, activeWs.id, 'logos');
           setBrandKit((prev) => (prev ? { ...prev, logoUrl: res.secureUrl, logoCloudinaryId: res.publicId } : null));
+          toast.success('Logo synced to cloud storage!');
         } catch (err) {
           console.warn('[Cloudinary] Logo cloud upload failed, using local fallback:', err);
+          toast.info('Logo saved locally for this browser.');
+        } finally {
+          setIsUploadingLogo(false);
         }
       }
     };
@@ -120,14 +161,20 @@ export default function BrandStudioPage() {
       toast.success('Digital signature uploaded successfully!');
 
       // Cloudinary cloud upload if workspace is active
-      if (workspace?.id) {
+      const activeWs = workspace || (await workspaceRepo.getActiveWorkspace());
+      if (activeWs?.id && activeWs.id !== 'ws_current') {
+        setIsUploadingSignature(true);
         try {
-          const res = await uploadToCloudinary(file, workspace.id, 'signatures');
+          const res = await uploadToCloudinary(file, activeWs.id, 'signatures');
           setBrandKit((prev) =>
             prev ? { ...prev, signatureUrl: res.secureUrl, signatureCloudinaryId: res.publicId } : null
           );
+          toast.success('Signature synced to cloud storage!');
         } catch (err) {
           console.warn('[Cloudinary] Signature cloud upload failed, using local fallback:', err);
+          toast.info('Signature saved locally for this browser.');
+        } finally {
+          setIsUploadingSignature(false);
         }
       }
     };
@@ -135,18 +182,46 @@ export default function BrandStudioPage() {
   };
 
   const handleSaveBrandKit = async () => {
-    if (!brandKit) return;
-    setIsSaving(true);
+    if (!brandKit || saveStatus === 'saving') return;
+
+    // 1. Resolve and verify active workspace ID
+    let currentWs = workspace;
+    if (!currentWs || currentWs.id === 'ws_current') {
+      currentWs = await workspaceRepo.getActiveWorkspace();
+      if (currentWs) setWorkspace(currentWs);
+    }
+
+    const targetWsId = currentWs?.id;
+    if (!targetWsId || targetWsId === 'ws_current') {
+      setSaveStatus('error');
+      setSaveErrorMessage('Workspace is still initializing. Please wait a moment.');
+      toast.error('Workspace is not ready yet. Please wait a moment and try again.');
+      return;
+    }
+
+    setSaveStatus('saving');
+    setSaveErrorMessage(null);
+
+    const kitToSave: BrandKit = {
+      ...brandKit,
+      workspaceId: targetWsId,
+      id: brandKit.id && brandKit.id !== 'bk_ws_current' ? brandKit.id : `bk_${targetWsId}`
+    };
+
     try {
-      await brandRepo.saveBrandKit(brandKit);
-      setSaveSuccess(true);
+      await brandRepo.saveBrandKit(kitToSave);
+      setBrandKit(kitToSave);
+      setSaveStatus('saved');
       toast.success('Brand Kit saved successfully!');
-      setTimeout(() => setSaveSuccess(false), 3000);
+      setTimeout(() => {
+        setSaveStatus('idle');
+      }, 3500);
     } catch (err) {
-      console.error(err);
-      toast.error('Failed to save Brand Kit.');
-    } finally {
-      setIsSaving(false);
+      console.error('[BrandStudio] Save failed:', err);
+      const msg = err instanceof Error ? err.message : 'Unknown error occurred while saving';
+      setSaveStatus('error');
+      setSaveErrorMessage(msg);
+      toast.error('Could not save Brand Kit to cloud. Click Retry to try again.');
     }
   };
 
@@ -237,7 +312,28 @@ export default function BrandStudioPage() {
     { name: 'System Sans', value: 'system-ui, -apple-system, sans-serif' },
   ];
 
-  if (!brandKit) return null;
+  if (isLoading || !brandKit) {
+    return (
+      <AppShell>
+        <div className="space-y-6 animate-pulse">
+          <div className="flex justify-between items-center pb-6 border-b border-[#E6E8F0]">
+            <div className="space-y-2">
+              <div className="h-7 w-48 bg-slate-200 rounded-lg" />
+              <div className="h-4 w-72 bg-slate-100 rounded" />
+            </div>
+            <div className="h-10 w-36 bg-slate-200 rounded-xl" />
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <div className="lg:col-span-5 space-y-6">
+              <div className="h-44 bg-white rounded-2xl border border-slate-200 p-6" />
+              <div className="h-64 bg-white rounded-2xl border border-slate-200 p-6" />
+            </div>
+            <div className="lg:col-span-7 h-[600px] bg-white rounded-2xl border border-slate-200" />
+          </div>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell>
@@ -258,16 +354,32 @@ export default function BrandStudioPage() {
 
           <button
             onClick={handleSaveBrandKit}
-            disabled={isSaving}
-            className="inline-flex items-center gap-2 bg-[#6254E8] hover:bg-[#5244d4] text-white text-xs font-semibold px-4.5 py-2.5 rounded-xl shadow-md shadow-[#6254E8]/20 transition-all"
+            disabled={saveStatus === 'saving'}
+            className={`inline-flex items-center gap-2 text-xs font-semibold px-4.5 py-2.5 rounded-xl shadow-md transition-all active:scale-[0.98] ${
+              saveStatus === 'saved'
+                ? 'bg-emerald-600 text-white shadow-emerald-600/20'
+                : saveStatus === 'error'
+                ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/20'
+                : saveStatus === 'saving'
+                ? 'bg-[#6254E8]/80 text-white cursor-wait'
+                : 'bg-[#6254E8] hover:bg-[#5244d4] text-white shadow-[#6254E8]/20'
+            }`}
           >
-            {saveSuccess ? (
+            {saveStatus === 'saving' ? (
               <>
-                <Check className="w-4 h-4 text-emerald-300" />
-                <span>Brand Kit Saved!</span>
+                <Loader2 className="w-4 h-4 animate-spin text-white" />
+                <span>Saving…</span>
               </>
-            ) : isSaving ? (
-              <span>Saving...</span>
+            ) : saveStatus === 'saved' ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-emerald-200" />
+                <span>Brand Kit saved successfully</span>
+              </>
+            ) : saveStatus === 'error' ? (
+              <>
+                <RotateCcw className="w-4 h-4 text-white" />
+                <span>Couldn&apos;t save Brand Kit — Retry</span>
+              </>
             ) : (
               <>
                 <FileCheck className="w-4 h-4" />
@@ -343,6 +455,13 @@ export default function BrandStudioPage() {
                 <div className="flex items-center gap-2 text-xs text-[#6254E8] font-medium animate-pulse">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                   <span>Extracting brand palette and checking contrast...</span>
+                </div>
+              )}
+
+              {isUploadingLogo && (
+                <div className="flex items-center gap-2 text-xs text-indigo-600 font-medium animate-pulse">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Syncing logo to secure cloud storage...</span>
                 </div>
               )}
             </div>
@@ -556,6 +675,13 @@ export default function BrandStudioPage() {
                     <p className="text-[11px] text-slate-500 font-medium">Click to upload signature scan</p>
                   )}
                 </div>
+
+                {isUploadingSignature && (
+                  <div className="flex items-center gap-2 text-xs text-indigo-600 font-medium animate-pulse mt-2">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Syncing signature to cloud storage...</span>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-3 mt-3">
                   <input

@@ -13,24 +13,25 @@ export class FirebaseWorkspaceRepository implements IWorkspaceRepository {
   async getActiveWorkspace(): Promise<Workspace | null> {
     if (typeof window === 'undefined') return null;
 
-    // 1. Fast Path: Return in-memory cache instantly (0ms)
-    if (this.memoryCache) {
+    const user = auth.currentUser;
+
+    // 1. Fast Path: Return in-memory cache instantly (0ms) if valid
+    if (this.memoryCache && (!user || this.memoryCache.id !== 'ws_current')) {
       this.revalidateInBackground();
       return this.memoryCache;
     }
 
-    // 2. Local-first Path: Return IndexedDB cache immediately (2-5ms)
+    // 2. Local-first Path: Return IndexedDB cache immediately (2-5ms) if valid
     const localWs = await this.localFallback.getActiveWorkspace();
-    if (localWs) {
+    if (localWs && (!user || localWs.id !== 'ws_current')) {
       this.memoryCache = localWs;
       this.revalidateInBackground();
       return localWs;
     }
 
-    // 3. Cloud fetch if no local workspace exists yet
-    const user = auth.currentUser;
+    // 3. Cloud fetch / bootstrap if user is authenticated
     if (!user) {
-      return null;
+      return localWs;
     }
 
     try {
@@ -55,7 +56,24 @@ export class FirebaseWorkspaceRepository implements IWorkspaceRepository {
         }
       }
 
-      return null;
+      // If user is authenticated but has no cloud workspace, bootstrap one now
+      const newWs = await this.createWorkspace({
+        name: user.displayName ? `${user.displayName}'s Studio` : 'My Business Studio',
+        email: user.email || 'billing@studio.com',
+        address: {
+          line1: 'Primary Office',
+          city: 'City',
+          country: 'United States'
+        },
+        currency: 'USD',
+        dateFormat: 'YYYY-MM-DD',
+        invoiceNumberPrefix: 'INV-',
+        invoiceNumberNext: 1001,
+        defaultPaymentTermsDays: 14,
+        paymentInstructions: 'ACH or Wire transfers accepted. Net 14 days.'
+      });
+
+      return newWs;
     } catch (err) {
       console.warn('[FirebaseWorkspaceRepository] Cloud fetch error, using local fallback:', err);
       return this.localFallback.getActiveWorkspace();
