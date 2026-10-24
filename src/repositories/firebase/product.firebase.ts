@@ -9,25 +9,35 @@ export class FirebaseProductRepository implements IProductRepository {
   async getProducts(workspaceId: string): Promise<Product[]> {
     if (typeof window === 'undefined') return [];
 
+    // 1. Fast path: return local cache immediately (<5ms)
+    const localProducts = await this.localFallback.getProducts(workspaceId);
+
     const user = auth.currentUser;
     if (!user || !workspaceId) {
-      return this.localFallback.getProducts(workspaceId);
+      return localProducts;
     }
 
+    // 2. Background cloud sync — does not block the UI
     try {
       const q = query(collection(db, 'workspaces', workspaceId, 'products'), orderBy('name', 'asc'));
       const snap = await getDocs(q);
 
-      const products = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Product));
+      const cloudProducts = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Product));
 
-      for (const p of products) {
-        await this.localFallback.saveProduct(p);
+      // Parallel write to IndexedDB — no sequential blocking
+      Promise.all(cloudProducts.map((p) => this.localFallback.saveProduct(p))).catch((err) =>
+        console.warn('[FirebaseProductRepository] Warning caching cloud products:', err)
+      );
+
+      // Prefer cloud data when available
+      if (cloudProducts.length > 0 || localProducts.length === 0) {
+        return cloudProducts;
       }
 
-      return products;
+      return localProducts;
     } catch (err) {
       console.warn('[FirebaseProductRepository] Fallback to local on error:', err);
-      return this.localFallback.getProducts(workspaceId);
+      return localProducts;
     }
   }
 

@@ -12,6 +12,7 @@ import { InvoiceTemplateRenderer } from '@/components/invoices/templates/Invoice
 import { Invoice, InvoicePayment, InvoiceSender } from '@/types/invoice';
 import { SenderEditorModal } from '@/components/invoices/SenderEditorModal';
 import { Workspace } from '@/types/workspace';
+import { toast } from '@/components/ui/Toast';
 import confetti from 'canvas-confetti';
 import {
   ArrowLeft,
@@ -117,7 +118,7 @@ export function InvoiceDetailClient() {
   const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (paymentAmount <= 0) {
-      alert('Please enter a payment amount greater than zero.');
+      toast.warning('Please enter a payment amount greater than zero.');
       return;
     }
     setIsSubmitting(true);
@@ -133,6 +134,7 @@ export function InvoiceDetailClient() {
       if (updated) {
         setInvoice(updated);
         setIsPaymentModalOpen(false);
+        toast.success(`Payment of ${formatCurrency(paymentAmount, currency)} recorded successfully!`);
 
         if (updated.status === 'paid') {
           try {
@@ -142,7 +144,28 @@ export function InvoiceDetailClient() {
       }
     } catch (err) {
       console.error(err);
-      alert('Failed to record payment');
+      toast.error('Failed to record payment. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Issue Draft Invoice
+  const handleIssueDraftInvoice = async () => {
+    if (!invoice) return;
+    setIsSubmitting(true);
+    try {
+      const issued = await invoiceRepo.issueInvoice(invoice.id);
+      if (issued) {
+        setInvoice(issued);
+        try {
+          confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+        } catch {}
+        toast.success(`Invoice ${issued.invoiceNumber} officially issued!`);
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to issue invoice.');
     } finally {
       setIsSubmitting(false);
     }
@@ -211,9 +234,10 @@ export function InvoiceDetailClient() {
     setIsGeneratingPdf(true);
     try {
       await exportInvoiceToPdf('invoice-detail-render-target', `${invoice.invoiceNumber}.pdf`, invoice.pageFormat);
+      toast.success('PDF downloaded successfully!');
     } catch (err) {
       console.error(err);
-      alert('Unable to generate PDF directly. Please use the Print button to print or save as PDF.');
+      toast.error('Unable to generate PDF directly. Please use the Print button to print or save as PDF.');
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -285,7 +309,19 @@ export function InvoiceDetailClient() {
 
           {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-2">
-            {invoice.balanceDue > 0 && (
+            {invoice.status === 'draft' && (
+              <button
+                type="button"
+                onClick={handleIssueDraftInvoice}
+                disabled={isSubmitting}
+                className="inline-flex items-center gap-1.5 bg-[#6254E8] hover:bg-[#5244d4] text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-xs transition-colors disabled:opacity-60"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Issue Invoice</span>
+              </button>
+            )}
+
+            {invoice.balanceDue > 0 && invoice.status !== 'draft' && (
               <button
                 type="button"
                 onClick={() => {

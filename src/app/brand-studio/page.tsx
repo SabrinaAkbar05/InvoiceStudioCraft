@@ -10,6 +10,7 @@ import { Workspace } from '@/types/workspace';
 import { Invoice } from '@/types/invoice';
 import { InvoiceTemplateRenderer } from '@/components/invoices/templates/InvoiceTemplateRenderer';
 import { uploadToCloudinary } from '@/lib/cloudinary/client';
+import { toast } from '@/components/ui/Toast';
 import {
   Upload,
   Sparkles,
@@ -60,12 +61,12 @@ export default function BrandStudioPage() {
     if (!file) return;
 
     if (!file.type.match(/image\/(png|jpeg|jpg|webp|svg\+xml)/)) {
-      alert('Please upload a valid image file (PNG, JPG, SVG, or WebP).');
+      toast.warning('Please upload a valid image file (PNG, JPG, SVG, or WebP).');
       return;
     }
 
     if (file.size > 2 * 1024 * 1024) {
-      alert('Logo file size must be under 2MB.');
+      toast.warning('Logo file size must be under 2MB.');
       return;
     }
 
@@ -90,6 +91,7 @@ export default function BrandStudioPage() {
       });
 
       setIsExtracting(false);
+      toast.success('Logo uploaded and brand colors extracted successfully!');
 
       // Cloudinary cloud upload if workspace is active
       if (workspace?.id) {
@@ -107,7 +109,7 @@ export default function BrandStudioPage() {
   const handleSignatureUpload = (file: File) => {
     if (!file) return;
     if (file.size > 1 * 1024 * 1024) {
-      alert('Signature file size must be under 1MB.');
+      toast.warning('Signature file size must be under 1MB.');
       return;
     }
 
@@ -115,6 +117,7 @@ export default function BrandStudioPage() {
     reader.onload = async (e) => {
       const dataUrl = e.target?.result as string;
       setBrandKit((prev) => (prev ? { ...prev, signatureDataUrl: dataUrl } : null));
+      toast.success('Digital signature uploaded successfully!');
 
       // Cloudinary cloud upload if workspace is active
       if (workspace?.id) {
@@ -137,10 +140,11 @@ export default function BrandStudioPage() {
     try {
       await brandRepo.saveBrandKit(brandKit);
       setSaveSuccess(true);
+      toast.success('Brand Kit saved successfully!');
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err) {
       console.error(err);
-      alert('Failed to save Brand Kit');
+      toast.error('Failed to save Brand Kit.');
     } finally {
       setIsSaving(false);
     }

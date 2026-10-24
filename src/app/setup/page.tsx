@@ -7,6 +7,7 @@ import { workspaceRepo } from '@/repositories/workspace.repo';
 import { brandRepo } from '@/repositories/brand.repo';
 import { extractColorsFromImage } from '@/lib/brand/color-extractor';
 import { SUPPORTED_CURRENCIES } from '@/types/workspace';
+import { toast } from '@/components/ui/Toast';
 import {
   Sparkles,
   Building,
@@ -75,7 +76,7 @@ export default function WorkspaceSetupPage() {
 
   const handleCompleteSetup = async () => {
     if (!name.trim() || !email.trim()) {
-      alert('Please provide your business name and billing email.');
+      toast.warning('Please provide your business name and billing email.');
       setStep(1);
       return;
     }
@@ -114,10 +115,11 @@ export default function WorkspaceSetupPage() {
         });
       }
 
+      toast.success('Workspace configured successfully!');
       router.push('/dashboard');
     } catch (err) {
       console.error(err);
-      alert('Failed to complete onboarding');
+      toast.error('Failed to complete onboarding. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -266,7 +268,7 @@ export default function WorkspaceSetupPage() {
                   type="button"
                   onClick={() => {
                     if (!name.trim() || !email.trim()) {
-                      alert('Please provide your business name and billing email.');
+                      toast.warning('Please provide your business name and billing email.');
                       return;
                     }
                     setStep(2);

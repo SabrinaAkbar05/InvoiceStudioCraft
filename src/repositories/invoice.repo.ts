@@ -8,6 +8,7 @@ export interface IInvoiceRepository {
   getInvoice(id: string): Promise<Invoice | null>;
   saveInvoice(invoice: Invoice): Promise<void>;
   createInvoice(data: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt'>): Promise<Invoice>;
+  issueInvoice(id: string): Promise<Invoice | null>;
   duplicateInvoice(id: string): Promise<Invoice | null>;
   recordPayment(invoiceId: string, paymentData: Omit<InvoicePayment, 'id' | 'invoiceId' | 'createdAt'>): Promise<Invoice | null>;
   deleteInvoice(id: string): Promise<void>;
@@ -28,7 +29,6 @@ export class LocalInvoiceRepository implements IInvoiceRepository {
   }
 
   async saveInvoice(invoice: Invoice): Promise<void> {
-    // Recalculate totals and status
     const calc = calculateInvoiceTotals({
       items: invoice.items,
       discountType: invoice.discountType,
@@ -49,7 +49,7 @@ export class LocalInvoiceRepository implements IInvoiceRepository {
       total: calc.total,
       amountPaid: calc.amountPaid,
       balanceDue: calc.balanceDue,
-      status: calc.computedStatus,
+      status: invoice.status === 'draft' ? 'draft' : calc.computedStatus,
       updatedAt: new Date().toISOString()
     };
 
@@ -81,7 +81,7 @@ export class LocalInvoiceRepository implements IInvoiceRepository {
       total: calc.total,
       amountPaid: calc.amountPaid,
       balanceDue: calc.balanceDue,
-      status: calc.computedStatus,
+      status: data.status === 'draft' ? 'draft' : calc.computedStatus,
       createdAt: now,
       updatedAt: now
     };
@@ -90,12 +90,53 @@ export class LocalInvoiceRepository implements IInvoiceRepository {
 
     // Increment workspace next invoice number if matched
     const ws = await workspaceRepo.getActiveWorkspace();
-    if (ws && invoice.invoiceNumber.includes(String(ws.invoiceNumberNext))) {
+    if (ws && invoice.invoiceNumber && invoice.invoiceNumber.includes(String(ws.invoiceNumberNext))) {
       ws.invoiceNumberNext += 1;
       await workspaceRepo.saveWorkspace(ws);
     }
 
     return invoice;
+  }
+
+  async issueInvoice(id: string): Promise<Invoice | null> {
+    const inv = await this.getInvoice(id);
+    if (!inv) return null;
+
+    // Prevent duplicate issuance if already issued or paid
+    if (inv.status !== 'draft') {
+      return inv;
+    }
+
+    const now = new Date().toISOString();
+    const today = now.split('T')[0];
+
+    const calc = calculateInvoiceTotals({
+      items: inv.items,
+      discountType: inv.discountType,
+      discountValue: inv.discountValue,
+      taxType: inv.taxType,
+      taxRate: inv.taxRate,
+      deliveryCharge: inv.deliveryCharge,
+      payments: inv.payments,
+      dueDate: inv.dueDate,
+      currentStatus: 'issued'
+    });
+
+    const updated: Invoice = {
+      ...inv,
+      status: calc.computedStatus === 'draft' ? 'issued' : calc.computedStatus,
+      issueDate: inv.issueDate || today,
+      subtotal: calc.subtotal,
+      discountTotal: calc.discountTotal,
+      taxTotal: calc.taxTotal,
+      total: calc.total,
+      amountPaid: calc.amountPaid,
+      balanceDue: calc.balanceDue,
+      updatedAt: now
+    };
+
+    await localDb.put('invoices', updated);
+    return updated;
   }
 
   async duplicateInvoice(id: string): Promise<Invoice | null> {

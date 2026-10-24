@@ -6,6 +6,7 @@ import { workspaceRepo } from '@/repositories/workspace.repo';
 import { localDb } from '@/lib/db/indexeddb';
 import { seedDemoData } from '@/lib/db/seed';
 import { Workspace, SUPPORTED_CURRENCIES } from '@/types/workspace';
+import { toast } from '@/components/ui/Toast';
 import {
   Settings,
   Save,
@@ -44,10 +45,11 @@ export default function SettingsPage() {
     try {
       await workspaceRepo.saveWorkspace(workspace);
       setSaveSuccess(true);
+      toast.success('Workspace settings updated successfully!');
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err) {
       console.error(err);
-      alert('Failed to save settings');
+      toast.error('Failed to save settings.');
     } finally {
       setIsSaving(false);
     }
@@ -63,9 +65,10 @@ export default function SettingsPage() {
       a.download = `invoicecraft-backup-${new Date().toISOString().split('T')[0]}.json`;
       a.click();
       URL.revokeObjectURL(url);
+      toast.success('Backup file exported successfully!');
     } catch (err) {
       console.error(err);
-      alert('Failed to export backup');
+      toast.error('Failed to export backup.');
     }
   };
 
@@ -80,12 +83,13 @@ export default function SettingsPage() {
         const res = await localDb.importBackup(text);
         if (res.success) {
           setImportStatus('Backup restored successfully! Reloading...');
+          toast.success('Backup restored successfully!');
           setTimeout(() => window.location.reload(), 1500);
         } else {
-          alert(res.message);
+          toast.error(res.message);
         }
       } catch (err: any) {
-        alert(err.message || 'Failed to restore backup');
+        toast.error(err.message || 'Failed to restore backup');
       }
     };
     reader.readAsText(file);

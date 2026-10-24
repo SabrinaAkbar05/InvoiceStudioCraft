@@ -10,6 +10,7 @@ import { formatCurrency, formatDate } from '@/lib/calculations/engine';
 import { exportInvoiceToPdf } from '@/lib/export/pdf';
 import { Invoice, InvoiceStatus } from '@/types/invoice';
 import { Workspace } from '@/types/workspace';
+import { toast } from '@/components/ui/Toast';
 import {
   Plus,
   Search,
@@ -55,17 +56,29 @@ export default function InvoicesListPage() {
   }, []);
 
   const handleDuplicate = async (id: string) => {
-    const dup = await invoiceRepo.duplicateInvoice(id);
-    if (dup) {
-      await loadInvoices();
-      router.push(`/invoices/${dup.id}`);
+    try {
+      const dup = await invoiceRepo.duplicateInvoice(id);
+      if (dup) {
+        await loadInvoices();
+        toast.success(`Duplicate draft ${dup.invoiceNumber} created`);
+        router.push(`/invoices/${dup.id}`);
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to duplicate invoice.');
     }
   };
 
   const handleDelete = async (id: string, invoiceNumber: string) => {
     if (confirm(`Are you sure you want to delete invoice ${invoiceNumber}? This action cannot be undone.`)) {
-      await invoiceRepo.deleteInvoice(id);
-      await loadInvoices();
+      try {
+        await invoiceRepo.deleteInvoice(id);
+        toast.success(`Invoice ${invoiceNumber} deleted`);
+        await loadInvoices();
+      } catch (err) {
+        console.error(err);
+        toast.error('Failed to delete invoice.');
+      }
     }
   };
 
@@ -206,7 +219,20 @@ export default function InvoicesListPage() {
         {/* Invoice Table Card */}
         <div className="bg-white rounded-2xl border border-[#E6E8F0] shadow-xs overflow-hidden">
           {isLoading ? (
-            <div className="py-16 text-center text-xs text-slate-400">Loading invoices...</div>
+            <div className="p-6 space-y-4 animate-pulse">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="flex items-center justify-between py-3 border-b border-slate-100 last:border-0">
+                  <div className="flex items-center gap-4">
+                    <div className="h-4 w-24 bg-slate-200 rounded" />
+                    <div className="h-4 w-36 bg-slate-100 rounded" />
+                  </div>
+                  <div className="flex items-center gap-6">
+                    <div className="h-4 w-20 bg-slate-100 rounded" />
+                    <div className="h-5 w-16 bg-slate-200 rounded-full" />
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : filteredInvoices.length === 0 ? (
             <div className="py-16 text-center space-y-3">
               <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">

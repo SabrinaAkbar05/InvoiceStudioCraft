@@ -49,6 +49,7 @@ export const viewport: Viewport = {
 };
 
 import { AuthProvider } from "@/contexts/AuthContext";
+import { ToastContainer } from "@/components/ui/Toast";
 
 export default function RootLayout({
   children,
@@ -62,7 +63,10 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
       </head>
       <body className="min-h-full flex flex-col bg-[#F5F6FA] text-[#0F1128]">
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          {children}
+          <ToastContainer />
+        </AuthProvider>
       </body>
     </html>
   );

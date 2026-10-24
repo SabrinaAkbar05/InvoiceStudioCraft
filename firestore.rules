@@ -2,105 +2,229 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
+    // =========================================================================
+    // HELPER FUNCTIONS
+    // =========================================================================
+
     function isAuthenticated() {
-      return request.auth != null;
+      return request.auth != null && request.auth.uid != null;
     }
 
     function isUser(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isWorkspaceMember(workspaceId) {
+    // Checks if the requester is the direct owner of the workspace
+    function isWorkspaceOwner(workspaceId) {
       return isAuthenticated() && (
-        exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid)) ||
+        (resource != null && resource.data.ownerId == request.auth.uid) ||
         get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid
       );
     }
 
-    function getWorkspaceRole(workspaceId) {
-      return get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid)).data.role;
+    // Checks if a member document exists for this user in the workspace
+    function memberDocExists(workspaceId) {
+      return isAuthenticated() && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid));
     }
 
+    // Safely retrieves workspace role; returns null if member doc does not exist
+    function getWorkspaceRole(workspaceId) {
+      return memberDocExists(workspaceId)
+        ? get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid)).data.role
+        : null;
+    }
+
+    // Any valid member (owner, admin, member, or viewer)
+    function isWorkspaceMember(workspaceId) {
+      return isAuthenticated() && (
+        isWorkspaceOwner(workspaceId) ||
+        memberDocExists(workspaceId)
+      );
+    }
+
+    // Workspace members with write access (owner, admin, or member - excludes viewer)
+    function isWorkspaceWriter(workspaceId) {
+      return isAuthenticated() && (
+        isWorkspaceOwner(workspaceId) ||
+        getWorkspaceRole(workspaceId) in ['owner', 'admin', 'member']
+      );
+    }
+
+    // Workspace admins and owner
     function isWorkspaceAdminOrOwner(workspaceId) {
       return isAuthenticated() && (
-        get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid ||
+        isWorkspaceOwner(workspaceId) ||
         getWorkspaceRole(workspaceId) in ['owner', 'admin']
       );
     }
 
-    // Default deny
+    // Check if only the invoice counter is being advanced during invoice creation
+    function isAdvancingInvoiceCounter() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['invoiceNumberNext', 'updatedAt']) &&
+        request.resource.data.ownerId == resource.data.ownerId;
+    }
+
+    // =========================================================================
+    // DEFAULT DENY ALL (Zero public access)
+    // =========================================================================
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // User profiles — only the user themselves can read and write their profile
+    // =========================================================================
+    // USER PROFILES
+    // Stored at /users/{userId}
+    // Only the authenticated owner of the profile can read and update their record.
+    // =========================================================================
     match /users/{userId} {
-      allow read, write: if isUser(userId);
+      allow read: if isUser(userId);
+      allow create: if isUser(userId) && (!('uid' in request.resource.data) || request.resource.data.uid == userId);
+      allow update: if isUser(userId) && (!('uid' in request.resource.data) || request.resource.data.uid == userId);
+      allow delete: if false; // User records must not be deleted from client SDK
     }
 
-    // Workspaces
+    // =========================================================================
+    // WORKSPACES
+    // Stored at /workspaces/{workspaceId}
+    // =========================================================================
     match /workspaces/{workspaceId} {
-      allow read: if isWorkspaceMember(workspaceId);
-      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
-      allow update: if isWorkspaceAdminOrOwner(workspaceId);
-      allow delete: if isAuthenticated() && get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid;
+      // Single doc get: allowed if user is workspace owner or member
+      allow get: if isWorkspaceMember(workspaceId);
 
-      // Workspace Members — only admin/owner can write, prevent self-elevation
+      // Collection list: allowed for queries filtering by ownerId == request.auth.uid
+      allow list: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
+
+      // Workspace creation: authenticated user becomes owner
+      allow create: if isAuthenticated() && request.resource.data.ownerId == request.auth.uid;
+
+      // Workspace update:
+      // 1. Admins/owners can update settings (cannot transfer ownerId)
+      // 2. Writers can advance invoiceNumberNext during invoice creation
+      allow update: if (
+        isWorkspaceAdminOrOwner(workspaceId) &&
+        request.resource.data.ownerId == resource.data.ownerId
+      ) || (
+        isWorkspaceWriter(workspaceId) &&
+        isAdvancingInvoiceCounter()
+      );
+
+      // Only the true owner can delete their workspace
+      allow delete: if isWorkspaceOwner(workspaceId);
+
+      // -----------------------------------------------------------------------
+      // WORKSPACE MEMBERS
+      // /workspaces/{workspaceId}/members/{memberId}
+      // -----------------------------------------------------------------------
       match /members/{memberId} {
         allow read: if isWorkspaceMember(workspaceId);
-        allow write: if isWorkspaceAdminOrOwner(workspaceId);
+
+        // Workspace creator bootstrapping their own owner record or admin adding a member
+        allow create: if (
+          isWorkspaceAdminOrOwner(workspaceId) ||
+          (isAuthenticated() && request.auth.uid == memberId && isWorkspaceOwner(workspaceId))
+        ) && request.resource.data.role in ['owner', 'admin', 'member', 'viewer'];
+
+        // Only admins/owners can update member roles; cannot alter userId
+        allow update: if isWorkspaceAdminOrOwner(workspaceId) &&
+          request.resource.data.userId == resource.data.userId &&
+          request.resource.data.role in ['owner', 'admin', 'member', 'viewer'];
+
+        // Only admins/owners can remove members; cannot delete the workspace owner
+        allow delete: if isWorkspaceAdminOrOwner(workspaceId) && resource.data.role != 'owner';
       }
 
-      // Brand Kit
+      // -----------------------------------------------------------------------
+      // BRAND KITS
+      // /workspaces/{workspaceId}/brandKits/{brandKitId}
+      // -----------------------------------------------------------------------
       match /brandKits/{brandKitId} {
         allow read: if isWorkspaceMember(workspaceId);
-        allow write: if isWorkspaceMember(workspaceId);
-      }
-
-      // Customers
-      match /customers/{customerId} {
-        allow read: if isWorkspaceMember(workspaceId);
-        allow write: if isWorkspaceMember(workspaceId);
-      }
-
-      // Products
-      match /products/{productId} {
-        allow read: if isWorkspaceMember(workspaceId);
-        allow write: if isWorkspaceMember(workspaceId);
-      }
-
-      // Invoices
-      // Drafts can be created and modified by members.
-      // Once issued/partially_paid/paid, invoices cannot be directly rewritten by clients;
-      // financial mutations flow through validated server endpoints or admin transactions.
-      match /invoices/{invoiceId} {
-        allow read: if isWorkspaceMember(workspaceId);
-        allow create: if isWorkspaceMember(workspaceId);
-        allow update: if isWorkspaceMember(workspaceId) && (
-          // Allow draft modifications
-          resource.data.status == 'draft' ||
-          // Admin/Owner can update status for workflow corrections, but cannot delete financial record
-          isWorkspaceAdminOrOwner(workspaceId)
-        );
-        allow delete: if isWorkspaceAdminOrOwner(workspaceId) && resource.data.status == 'draft';
-      }
-
-      // Payments
-      match /payments/{paymentId} {
-        allow read: if isWorkspaceMember(workspaceId);
-        allow create, update: if isWorkspaceAdminOrOwner(workspaceId);
+        allow create, update: if isWorkspaceWriter(workspaceId) &&
+          request.resource.data.workspaceId == workspaceId;
         allow delete: if isWorkspaceAdminOrOwner(workspaceId);
       }
 
-      // Audit Events
-      match /auditEvents/{eventId} {
-        allow read: if isWorkspaceAdminOrOwner(workspaceId);
-        allow create: if isWorkspaceMember(workspaceId);
-        allow update, delete: if false;
+      // -----------------------------------------------------------------------
+      // CUSTOMERS
+      // /workspaces/{workspaceId}/customers/{customerId}
+      // -----------------------------------------------------------------------
+      match /customers/{customerId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create, update: if isWorkspaceWriter(workspaceId) &&
+          request.resource.data.workspaceId == workspaceId;
+        allow delete: if isWorkspaceWriter(workspaceId);
       }
 
-      // Settings
+      // -----------------------------------------------------------------------
+      // PRODUCTS
+      // /workspaces/{workspaceId}/products/{productId}
+      // -----------------------------------------------------------------------
+      match /products/{productId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create, update: if isWorkspaceWriter(workspaceId) &&
+          request.resource.data.workspaceId == workspaceId;
+        allow delete: if isWorkspaceWriter(workspaceId);
+      }
+
+      // -----------------------------------------------------------------------
+      // INVOICES & INVOICE HISTORY
+      // /workspaces/{workspaceId}/invoices/{invoiceId}
+      // -----------------------------------------------------------------------
+      match /invoices/{invoiceId} {
+        // Read invoice history: all workspace members can view invoices
+        allow read: if isWorkspaceMember(workspaceId);
+
+        // Create invoice: writers can create drafts or new invoices
+        allow create: if isWorkspaceWriter(workspaceId) &&
+          request.resource.data.workspaceId == workspaceId;
+
+        // Save & update invoice:
+        // Writers can update drafts, record payments, and save calculations.
+        // Financial records cannot be reassigned to another workspace.
+        allow update: if isWorkspaceWriter(workspaceId) &&
+          request.resource.data.workspaceId == workspaceId &&
+          (
+            // Draft modifications
+            resource.data.status == 'draft' ||
+            // Recording payments / updating status
+            request.resource.data.status in ['draft', 'issued', 'partially_paid', 'paid', 'overdue', 'voided'] ||
+            isWorkspaceAdminOrOwner(workspaceId)
+          );
+
+        // Delete invoice: only admin/owner can delete, and only draft invoices
+        allow delete: if isWorkspaceAdminOrOwner(workspaceId) && resource.data.status == 'draft';
+      }
+
+      // -----------------------------------------------------------------------
+      // PAYMENTS
+      // /workspaces/{workspaceId}/payments/{paymentId}
+      // -----------------------------------------------------------------------
+      match /payments/{paymentId} {
+        allow read: if isWorkspaceMember(workspaceId);
+
+        // Workspace writers can record incoming payments
+        allow create: if isWorkspaceWriter(workspaceId) &&
+          request.resource.data.workspaceId == workspaceId;
+
+        // Payment modification and deletion is strictly reserved for admin/owner
+        allow update, delete: if isWorkspaceAdminOrOwner(workspaceId);
+      }
+
+      // -----------------------------------------------------------------------
+      // AUDIT EVENTS
+      // /workspaces/{workspaceId}/auditEvents/{eventId}
+      // -----------------------------------------------------------------------
+      match /auditEvents/{eventId} {
+        allow read: if isWorkspaceAdminOrOwner(workspaceId);
+        allow create: if isWorkspaceWriter(workspaceId) &&
+          request.resource.data.workspaceId == workspaceId;
+        allow update, delete: if false; // Immutable audit log
+      }
+
+      // -----------------------------------------------------------------------
+      // WORKSPACE SETTINGS
+      // /workspaces/{workspaceId}/settings/{settingId}
+      // -----------------------------------------------------------------------
       match /settings/{settingId} {
         allow read: if isWorkspaceMember(workspaceId);
         allow write: if isWorkspaceAdminOrOwner(workspaceId);

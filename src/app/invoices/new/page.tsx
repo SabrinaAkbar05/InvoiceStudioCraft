@@ -19,6 +19,7 @@ import { Product } from '@/types/product';
 import { Invoice, InvoiceItem, InvoiceSender, DiscountType, TaxType, PageFormat } from '@/types/invoice';
 import { SenderEditorModal } from '@/components/invoices/SenderEditorModal';
 import { ExtractedInvoiceData } from '@/types/ai';
+import { toast } from '@/components/ui/Toast';
 import confetti from 'canvas-confetti';
 import {
   Sparkles,
@@ -235,7 +236,7 @@ export default function CreateInvoicePage() {
 
   const handleDeleteItem = (index: number) => {
     if (items.length <= 1) {
-      alert('An invoice must have at least one line item.');
+      toast.warning('An invoice must have at least one line item.');
       return;
     }
     setItems((prev) => prev.filter((_, i) => i !== index));
@@ -350,19 +351,30 @@ export default function CreateInvoicePage() {
   // Save as Draft
   const handleSaveDraft = async () => {
     if (!customerName.trim()) {
-      alert('Please provide a client name.');
+      toast.warning('Please specify a client name before saving.');
       return;
     }
     setIsSubmitting(true);
     try {
-      const inv = await invoiceRepo.createInvoice({
+      let currentWs = workspace;
+      if (!currentWs || currentWs.id === 'ws_current') {
+        currentWs = await workspaceRepo.getActiveWorkspace();
+        if (currentWs) setWorkspace(currentWs);
+      }
+      const targetWorkspaceId = currentWs?.id || 'ws_default';
+
+      const draftToSave = {
         ...previewInvoice,
-        status: 'draft'
-      });
+        workspaceId: targetWorkspaceId,
+        status: 'draft' as const
+      };
+
+      const inv = await invoiceRepo.createInvoice(draftToSave);
+      toast.success('Draft invoice saved successfully!');
       router.push(`/invoices/${inv.id}`);
     } catch (err) {
-      console.error(err);
-      alert('Failed to save draft invoice');
+      console.error('[handleSaveDraft] Error saving draft:', err);
+      toast.error('Failed to save draft invoice. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -371,17 +383,39 @@ export default function CreateInvoicePage() {
   // Issue Invoice
   const handleIssueInvoice = async () => {
     if (!customerName.trim()) {
-      alert('Please specify the recipient/client name before issuing.');
+      toast.warning('Please specify the recipient/client name before issuing.');
+      return;
+    }
+    if (items.length === 0 || (items.length === 1 && !items[0].description.trim() && items[0].amount === 0)) {
+      toast.warning('Please add at least one line item before issuing.');
       return;
     }
     setIsSubmitting(true);
     try {
-      const inv = await invoiceRepo.createInvoice({
-        ...previewInvoice,
-        status: 'issued'
-      });
+      let currentWs = workspace;
+      if (!currentWs || currentWs.id === 'ws_current') {
+        currentWs = await workspaceRepo.getActiveWorkspace();
+        if (currentWs) setWorkspace(currentWs);
+      }
+      const targetWorkspaceId = currentWs?.id || 'ws_default';
 
-      // Celebration effect!
+      const allocatedNumber = invoiceNumber && invoiceNumber !== 'INV-0000'
+        ? invoiceNumber
+        : currentWs
+        ? `${currentWs.invoiceNumberPrefix}${currentWs.invoiceNumberNext}`
+        : `INV-${Date.now().toString().slice(-4)}`;
+
+      const invoiceToIssue = {
+        ...previewInvoice,
+        workspaceId: targetWorkspaceId,
+        invoiceNumber: allocatedNumber,
+        status: 'issued' as const,
+        issueDate: issueDate || new Date().toISOString().split('T')[0]
+      };
+
+      const inv = await invoiceRepo.createInvoice(invoiceToIssue);
+
+      // Celebration confetti!
       try {
         confetti({
           particleCount: 80,
@@ -390,10 +424,11 @@ export default function CreateInvoicePage() {
         });
       } catch {}
 
+      toast.success(`Invoice ${inv.invoiceNumber} issued successfully!`);
       router.push(`/invoices/${inv.id}`);
     } catch (err) {
-      console.error(err);
-      alert('Failed to issue invoice');
+      console.error('[handleIssueInvoice] Error issuing invoice:', err);
+      toast.error('Failed to issue invoice. Your work has been preserved as a local draft.');
     } finally {
       setIsSubmitting(false);
     }
@@ -405,9 +440,10 @@ export default function CreateInvoicePage() {
     setIsGeneratingPdf(true);
     try {
       await exportInvoiceToPdf('invoice-editor-render-target', `${invoiceNumber || 'invoice'}.pdf`, pageFormat);
+      toast.success('PDF downloaded successfully!');
     } catch (err) {
       console.error(err);
-      alert('Unable to generate PDF directly. Please try printing to PDF using the Print button.');
+      toast.error('Unable to generate PDF directly. Please try printing to PDF using the Print button.');
     } finally {
       setIsGeneratingPdf(false);
     }

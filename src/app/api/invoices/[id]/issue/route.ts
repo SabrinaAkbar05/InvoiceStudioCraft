@@ -38,15 +38,16 @@ export async function POST(
       }
 
       const invDoc = await transaction.get(invoiceRef);
-      if (!invDoc.exists) {
-        throw new Error('Invoice not found');
+      const incomingInvoice = body.invoice || (body.items ? body : null);
+      if (!invDoc.exists && !incomingInvoice) {
+        throw new Error('Invoice not found and no invoice data provided in payload');
       }
 
-      const invoiceData = invDoc.data() || {};
+      const invoiceData = invDoc.exists ? (invDoc.data() || {}) : { ...incomingInvoice, id: invoiceId, workspaceId };
       const wsData = wsDoc.data() || {};
 
       // If already issued, return existing
-      if (invoiceData.status && invoiceData.status !== 'draft') {
+      if (invDoc.exists && invoiceData.status && invoiceData.status !== 'draft') {
         return invoiceData;
       }
 

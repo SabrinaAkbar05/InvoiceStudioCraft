@@ -6,22 +6,38 @@ import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs } fro
 
 export class FirebaseWorkspaceRepository implements IWorkspaceRepository {
   private localFallback = new LocalWorkspaceRepository();
+  private memoryCache: Workspace | null = null;
+  private lastRevalidateTime = 0;
+  private isRevalidating = false;
 
   async getActiveWorkspace(): Promise<Workspace | null> {
     if (typeof window === 'undefined') return null;
 
+    // 1. Fast Path: Return in-memory cache instantly (0ms)
+    if (this.memoryCache) {
+      this.revalidateInBackground();
+      return this.memoryCache;
+    }
+
+    // 2. Local-first Path: Return IndexedDB cache immediately (2-5ms)
+    const localWs = await this.localFallback.getActiveWorkspace();
+    if (localWs) {
+      this.memoryCache = localWs;
+      this.revalidateInBackground();
+      return localWs;
+    }
+
+    // 3. Cloud fetch if no local workspace exists yet
     const user = auth.currentUser;
     if (!user) {
-      return this.localFallback.getActiveWorkspace();
+      return null;
     }
 
     try {
-      // 1. Check user profile's defaultWorkspaceId
       const userDoc = await getDoc(doc(db, 'users', user.uid));
       let targetWsId = userDoc.exists() ? userDoc.data()?.defaultWorkspaceId : null;
 
       if (!targetWsId) {
-        // Query owned workspaces
         const ownedQuery = query(collection(db, 'workspaces'), where('ownerId', '==', user.uid));
         const ownedSnap = await getDocs(ownedQuery);
         if (!ownedSnap.empty) {
@@ -32,15 +48,54 @@ export class FirebaseWorkspaceRepository implements IWorkspaceRepository {
       if (targetWsId) {
         const wsDoc = await getDoc(doc(db, 'workspaces', targetWsId));
         if (wsDoc.exists()) {
-          return { id: wsDoc.id, ...wsDoc.data() } as Workspace;
+          const cloudWs = { id: wsDoc.id, ...wsDoc.data() } as Workspace;
+          this.memoryCache = cloudWs;
+          await this.localFallback.saveWorkspace(cloudWs);
+          return cloudWs;
         }
       }
 
-      // If user has no cloud workspace yet, check if there's local data to offer
-      return this.localFallback.getActiveWorkspace();
+      return null;
     } catch (err) {
-      console.warn('[FirebaseWorkspaceRepository] Fallback to local DB on error:', err);
+      console.warn('[FirebaseWorkspaceRepository] Cloud fetch error, using local fallback:', err);
       return this.localFallback.getActiveWorkspace();
+    }
+  }
+
+  /**
+   * Revalidates workspace with Cloud Firestore in the background without blocking the UI
+   */
+  private async revalidateInBackground(): Promise<void> {
+    const user = auth.currentUser;
+    if (!user || this.isRevalidating) return;
+
+    // Only revalidate at most once every 15 seconds
+    const now = Date.now();
+    if (now - this.lastRevalidateTime < 15000) return;
+
+    this.isRevalidating = true;
+    this.lastRevalidateTime = now;
+
+    try {
+      let targetWsId = this.memoryCache?.id;
+
+      if (!targetWsId) {
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        targetWsId = userDoc.exists() ? userDoc.data()?.defaultWorkspaceId : null;
+      }
+
+      if (targetWsId) {
+        const wsDoc = await getDoc(doc(db, 'workspaces', targetWsId));
+        if (wsDoc.exists()) {
+          const freshWs = { id: wsDoc.id, ...wsDoc.data() } as Workspace;
+          this.memoryCache = freshWs;
+          await this.localFallback.saveWorkspace(freshWs);
+        }
+      }
+    } catch (err) {
+      console.warn('[FirebaseWorkspaceRepository] Background revalidation warning:', err);
+    } finally {
+      this.isRevalidating = false;
     }
   }
 
@@ -49,7 +104,8 @@ export class FirebaseWorkspaceRepository implements IWorkspaceRepository {
     const now = new Date().toISOString();
     const updated = { ...workspace, updatedAt: now };
 
-    // Always keep local DB synced
+    // Update memory and local IndexedDB instantly
+    this.memoryCache = updated;
     await this.localFallback.saveWorkspace(updated);
 
     if (user && workspace.id) {
@@ -57,9 +113,10 @@ export class FirebaseWorkspaceRepository implements IWorkspaceRepository {
         const wsRef = doc(db, 'workspaces', workspace.id);
         const wsDoc = await getDoc(wsRef);
         if (wsDoc.exists()) {
+          const currentOwner = wsDoc.data()?.ownerId || user.uid;
           await updateDoc(wsRef, {
             ...updated,
-            ownerId: wsDoc.data()?.ownerId || user.uid
+            ownerId: currentOwner
           });
         } else {
           await setDoc(wsRef, {
@@ -69,8 +126,8 @@ export class FirebaseWorkspaceRepository implements IWorkspaceRepository {
           });
         }
       } catch (err) {
-        console.error('[FirebaseWorkspaceRepository] Failed to save workspace to Firestore:', err);
-        throw err;
+        console.error('[FirebaseWorkspaceRepository] Error syncing workspace to Firestore:', err);
+        // Do not throw: local save is already safe and successful
       }
     }
   }
@@ -79,47 +136,54 @@ export class FirebaseWorkspaceRepository implements IWorkspaceRepository {
     const user = auth.currentUser;
     const localWs = await this.localFallback.createWorkspace(data);
 
+    this.memoryCache = localWs;
+
     if (user) {
       const now = new Date().toISOString();
       const wsRef = doc(db, 'workspaces', localWs.id);
 
-      await setDoc(wsRef, {
-        ...localWs,
-        ownerId: user.uid,
-        createdAt: now,
-        updatedAt: now
-      });
+      try {
+        await setDoc(wsRef, {
+          ...localWs,
+          ownerId: user.uid,
+          createdAt: now,
+          updatedAt: now
+        });
 
-      // Initialize member
-      const memberRef = doc(db, 'workspaces', localWs.id, 'members', user.uid);
-      await setDoc(memberRef, {
-        userId: user.uid,
-        email: user.email,
-        role: 'owner',
-        joinedAt: now
-      });
+        // Initialize owner membership
+        const memberRef = doc(db, 'workspaces', localWs.id, 'members', user.uid);
+        await setDoc(memberRef, {
+          userId: user.uid,
+          email: user.email,
+          role: 'owner',
+          joinedAt: now
+        });
 
-      // Initialize brand kit in Firestore
-      const brandKit: BrandKit = {
-        ...DEFAULT_BRAND_KIT,
-        id: `bk_${localWs.id}`,
-        workspaceId: localWs.id,
-        updatedAt: now
-      };
-      await setDoc(doc(db, 'workspaces', localWs.id, 'brandKits', brandKit.id), brandKit);
+        // Initialize brand kit in Firestore
+        const brandKit: BrandKit = {
+          ...DEFAULT_BRAND_KIT,
+          id: `bk_${localWs.id}`,
+          workspaceId: localWs.id,
+          updatedAt: now
+        };
+        await setDoc(doc(db, 'workspaces', localWs.id, 'brandKits', brandKit.id), brandKit);
 
-      // Set user profile default workspace
-      await setDoc(
-        doc(db, 'users', user.uid),
-        { defaultWorkspaceId: localWs.id, updatedAt: now },
-        { merge: true }
-      );
+        // Set user profile default workspace
+        await setDoc(
+          doc(db, 'users', user.uid),
+          { defaultWorkspaceId: localWs.id, updatedAt: now },
+          { merge: true }
+        );
+      } catch (err) {
+        console.error('[FirebaseWorkspaceRepository] Error syncing new workspace to Firestore:', err);
+      }
     }
 
     return localWs;
   }
 
   async clearWorkspace(): Promise<void> {
+    this.memoryCache = null;
     await this.localFallback.clearWorkspace();
   }
 }

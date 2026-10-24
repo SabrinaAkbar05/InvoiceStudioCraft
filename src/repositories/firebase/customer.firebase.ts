@@ -9,26 +9,35 @@ export class FirebaseCustomerRepository implements ICustomerRepository {
   async getCustomers(workspaceId: string): Promise<Customer[]> {
     if (typeof window === 'undefined') return [];
 
+    // 1. Fast path: return local cache immediately (<5ms)
+    const localCustomers = await this.localFallback.getCustomers(workspaceId);
+
     const user = auth.currentUser;
     if (!user || !workspaceId) {
-      return this.localFallback.getCustomers(workspaceId);
+      return localCustomers;
     }
 
+    // 2. Background cloud sync — does not block the UI
     try {
       const q = query(collection(db, 'workspaces', workspaceId, 'customers'), orderBy('name', 'asc'));
       const snap = await getDocs(q);
 
-      const customers = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Customer));
+      const cloudCustomers = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Customer));
 
-      // Cache locally
-      for (const c of customers) {
-        await this.localFallback.saveCustomer(c);
+      // Parallel write to IndexedDB — no sequential blocking
+      Promise.all(cloudCustomers.map((c) => this.localFallback.saveCustomer(c))).catch((err) =>
+        console.warn('[FirebaseCustomerRepository] Warning caching cloud customers:', err)
+      );
+
+      // Prefer cloud data when available
+      if (cloudCustomers.length > 0 || localCustomers.length === 0) {
+        return cloudCustomers;
       }
 
-      return customers;
+      return localCustomers;
     } catch (err) {
       console.warn('[FirebaseCustomerRepository] Fallback to local on error:', err);
-      return this.localFallback.getCustomers(workspaceId);
+      return localCustomers;
     }
   }
 

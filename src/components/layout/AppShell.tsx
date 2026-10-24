@@ -9,6 +9,7 @@ import { seedDemoData } from '@/lib/db/seed';
 import { Workspace, DEFAULT_WORKSPACE } from '@/types/workspace';
 import { BrandKit } from '@/types/brand';
 import { MigrationBanner } from '@/components/migration/MigrationBanner';
+import { toast } from '@/components/ui/Toast';
 import { X } from 'lucide-react';
 
 interface AppShellProps {
@@ -25,7 +26,6 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     try {
       let ws = await workspaceRepo.getActiveWorkspace();
       if (!ws) {
-        // Automatically initialize default workspace so the user has an immediate working state
         ws = await workspaceRepo.createWorkspace(DEFAULT_WORKSPACE);
       }
       setWorkspace(ws);
@@ -33,22 +33,48 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
       const bk = await brandRepo.getBrandKit(ws.id);
       setBrandKit(bk);
     } catch (err) {
-      console.error('Failed to initialize local workspace:', err);
+      console.warn('Workspace initialization warning:', err);
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
+    // Safety watchdog: ensure page is never stuck in an infinite loading state
+    const watchdogTimer = setTimeout(() => {
+      setIsLoading(false);
+    }, 1500);
+
     loadData();
+
+    // Listen for custom workspace update events
+    const handleWorkspaceUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<Workspace>;
+      if (customEvent.detail) {
+        setWorkspace(customEvent.detail);
+      }
+    };
+    window.addEventListener('workspace-updated', handleWorkspaceUpdated);
+
+    return () => {
+      clearTimeout(watchdogTimer);
+      window.removeEventListener('workspace-updated', handleWorkspaceUpdated);
+    };
   }, []);
 
   const handleLoadDemoData = async () => {
     if (confirm('Load demo workspace with sample invoices, customers, and products? (Existing local records will be replaced)')) {
       setIsLoading(true);
-      await seedDemoData();
-      await loadData();
-      window.location.reload();
+      try {
+        await seedDemoData();
+        await loadData();
+        toast.success('Sample workspace data loaded successfully!');
+        window.location.reload();
+      } catch (err) {
+        console.error(err);
+        toast.error('Failed to load demo data.');
+        setIsLoading(false);
+      }
     }
   };
 
@@ -94,16 +120,30 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
           <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">
             {isLoading ? (
-              <div className="flex items-center justify-center min-h-[400px]">
-                <div className="flex flex-col items-center gap-4">
-                  <div className="relative">
-                    <div className="w-12 h-12 border-[3px] border-[#EDE9FF] rounded-full" />
-                    <div className="absolute inset-0 w-12 h-12 border-[3px] border-[#5B4FCF] border-t-transparent rounded-full animate-spin" />
+              <div className="space-y-6 animate-pulse">
+                {/* Header Skeleton */}
+                <div className="flex justify-between items-center pb-4 border-b border-slate-200">
+                  <div className="space-y-2">
+                    <div className="h-6 w-48 bg-slate-200 rounded-lg" />
+                    <div className="h-4 w-72 bg-slate-100 rounded-lg" />
                   </div>
-                  <div className="text-center">
-                    <p className="text-sm font-semibold text-[#0F1128]">Loading workspace...</p>
-                    <p className="text-xs text-slate-400 mt-1">Connecting to IndexedDB</p>
-                  </div>
+                  <div className="h-9 w-32 bg-slate-200 rounded-xl" />
+                </div>
+                {/* Metric Cards Skeleton */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="h-28 bg-white rounded-2xl border border-slate-100 p-5 space-y-3">
+                      <div className="h-4 w-20 bg-slate-100 rounded" />
+                      <div className="h-8 w-28 bg-slate-200 rounded" />
+                    </div>
+                  ))}
+                </div>
+                {/* Content Area Skeleton */}
+                <div className="h-64 bg-white rounded-2xl border border-slate-100 p-6 space-y-4">
+                  <div className="h-5 w-40 bg-slate-200 rounded" />
+                  <div className="h-4 w-full bg-slate-50 rounded" />
+                  <div className="h-4 w-full bg-slate-50 rounded" />
+                  <div className="h-4 w-3/4 bg-slate-50 rounded" />
                 </div>
               </div>
             ) : (
